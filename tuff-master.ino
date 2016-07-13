@@ -82,6 +82,15 @@ void tuffCommand(unsigned int tuff, unsigned int command) {
   }
 }
 
+void resetAll() {
+  digitalWrite(tuff_reset[0], 0);
+  digitalWrite(tuff_reset[1], 0);
+  digitalWrite(tuff_reset[0], 1);
+  digitalWrite(tuff_reset[1], 1);
+  digitalWrite(tuff_reset[0], 0);
+  digitalWrite(tuff_reset[1], 0);
+}
+
 void setup()
 {
   unsigned char nb;
@@ -114,12 +123,7 @@ void setup()
   // Set up RESET outputs, and toggle RESET.
   pinMode(tuff_reset[0], OUTPUT);
   pinMode(tuff_reset[1], OUTPUT);
-  digitalWrite(tuff_reset[0], 0);
-  digitalWrite(tuff_reset[1], 0);
-  digitalWrite(tuff_reset[0], 1);
-  digitalWrite(tuff_reset[1], 1);
-  digitalWrite(tuff_reset[0], 0);
-  digitalWrite(tuff_reset[1], 0);
+  resetAll();
   // Sleep to make sure everyone's awake.
   delay(50);
   // OK, we're awake. Now synchronize them (send 0xD00D).
@@ -338,6 +342,17 @@ void parseJsonCommand() {
     unsigned char val = root["quiet"];
     if (val) quiet = true;
     else quiet = false;
+  }
+  if (root.containsKey("reset")) {
+    unsigned char val = root["reset"];
+    if (val == irfcm) {
+        resetAll();
+        if (!quiet) {
+          Serial.print("{\"ack\":");
+          Serial.print(irfcm);
+          Serial.println("}");
+        }
+    }
   }
   // Ping commands.
   if (root.containsKey("ping")) {
