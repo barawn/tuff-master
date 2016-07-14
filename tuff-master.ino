@@ -564,11 +564,20 @@ void parseJsonCommand() {
       }
       if (target == irfcm) {
         if (set.containsKey("phi")) {
+          unsigned int saveVal;
           JsonArray& phiArray = set["phi"];
           for (size_t i=0;i<phiArray.size();i++) {
             phi_array[i] = phiArray[i];
           }
-          ROM_EEPROMProgram(phi_array, sizeof(irfcm), sizeof(phi_array));
+          if (set.containsKey("save")) {
+            unsigned int val;
+            saveVal = set["save"];
+          } else {
+            saveVal = 1;
+          }
+          if (saveVal) {
+            ROM_EEPROMProgram(phi_array, sizeof(irfcm), sizeof(phi_array));
+          }
           if (!quiet) {
             Serial.print("{\"ack\":");
             Serial.print(irfcm);
