@@ -89,6 +89,11 @@ void resetAll() {
   digitalWrite(tuff_reset[1], 1);
   digitalWrite(tuff_reset[0], 0);
   digitalWrite(tuff_reset[1], 0);
+  // Sleep to make sure everyone's awake.
+  delay(50);
+  // OK, we're awake. Now synchronize them (send 0xD00D).
+  tuffCommand(0, 0xD00D); 
+  tuffCommand(1, 0xD00D);
 }
 
 void setup()
@@ -124,11 +129,6 @@ void setup()
   pinMode(tuff_reset[0], OUTPUT);
   pinMode(tuff_reset[1], OUTPUT);
   resetAll();
-  // Sleep to make sure everyone's awake.
-  delay(50);
-  // OK, we're awake. Now synchronize them (send 0xD00D).
-  tuffCommand(0, 0xD00D); 
-  tuffCommand(1, 0xD00D);  
   // Clear out our crap.
   nb = Serial.available();
   while (nb) {
