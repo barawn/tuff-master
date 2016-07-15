@@ -388,12 +388,7 @@ void parseJsonCommand() {
     if (val == irfcm) {
         if (debug) Serial2.println("Resetting TUFFs.");
         resetAll();
-        if (!quiet) {
-          led_blink_on(TX_LED);
-          Serial.print("{\"ack\":");
-          Serial.print(irfcm);
-          Serial.println("}");
-        }
+        sendAck();
     }
   }
   // Ping commands.
@@ -465,11 +460,7 @@ void parseJsonCommand() {
         tuff0.setDataMode(SPI_MODE3);
         tuff0.setClockDivider(16);        
       }
-      if (!quiet) {
-        Serial.print("{\"ack\":");
-        Serial.print(irfcm);
-        Serial.println("}");
-      }      
+      sendAck();
     }
   }
       
@@ -484,12 +475,7 @@ void parseJsonCommand() {
       // Add the notch command, the mask, and turn those on.
       addr = addr | 0x80 | (mask << 3) | mask;
       tuffCommand(tuff, addr);
-      led_blink_on(TX_LED);
-      if (!quiet) {
-        Serial.print("{\"ack\":");
-        Serial.print(irfcm);
-        Serial.println("}");
-      }
+      sendAck();
     }
   }
   // Off commands.
@@ -503,12 +489,7 @@ void parseJsonCommand() {
       // Add the notch command, the mask, and turn those off.
       addr = addr | 0x80 | (mask << 3);
       tuffCommand(tuff, addr);
-      led_blink_on(TX_LED);
-      if (!quiet) {
-        Serial.print("{\"ack\":");
-        Serial.print(irfcm);
-        Serial.println("}");
-      }
+      sendAck();
     }
   }
   // Raw commands. 
@@ -518,40 +499,27 @@ void parseJsonCommand() {
       unsigned int tuff = rawArray[1];
       unsigned int cmd = rawArray[2];
       tuffCommand(tuff, cmd);
-      led_blink_on(TX_LED);
-      if (!quiet) {
-        Serial.print("{\"ack\":");
-        Serial.print(irfcm);
-        Serial.println("}");
-      }
+      sendAck();
     }
   }
   // Set commands.
   if (root.containsKey("set")) {
     JsonObject& set = root["set"];
-    if (set.containsKey("addr")) {
-      unsigned int target = set["addr"];
-      if (set.containsKey("save")) {
-        unsigned int val;
-        val = set["save"];
-        // 42 is a magic number. Once it gets 42, it will stay
-        // 42 until someone forces me to fix it manually.       
-        if (irfcm != 42) {
-          irfcm = target;
-          if (val) {
-            ROM_EEPROMProgram(&irfcm, 0, sizeof(irfcm));          
-          }
-          if (!quiet) {
-            Serial.print("{\"ack\":");
-            Serial.print(irfcm);
-            Serial.println("}");
-          }
-        }
-      }
-    }
+    // Check if this is an iRFCM specific set.
+    // If so, only handle it if this is us.
     if (set.containsKey("irfcm")) {
       unsigned int target = set["irfcm"];
       if (target == irfcm) {
+        if (set.containsKey("addr")) {          
+          unsigned int target = set["addr"];
+          unsigned int val;
+          if (set.containsKey("save")) {
+            val = set["save"];
+          } else {
+            val = 1;
+          }
+          updateiRFCM(target, val);
+        }
         if (set.containsKey("phi")) {
           unsigned int saveVal;
           JsonArray& phiArray = set["phi"];
@@ -567,13 +535,18 @@ void parseJsonCommand() {
           if (saveVal) {
             ROM_EEPROMProgram(phi_array, sizeof(irfcm), sizeof(phi_array));
           }
-          if (!quiet) {
-            Serial.print("{\"ack\":");
-            Serial.print(irfcm);
-            Serial.println("}");
-          }
+          sendAck();
         }        
       }
+    } else if (set.containsKey("addr")) {
+      unsigned int target = set["addr"];
+      unsigned int val;
+      if (set.containsKey("save")) {
+        val = set["save"];
+      } else {
+        val = 1;
+      }
+      updateiRFCM(target, val);
     }
   }
 }
@@ -627,3 +600,22 @@ void notch_range_command(unsigned int notch, unsigned int start, unsigned int st
   tuffCommand(1, off_mask[3]);
 }
 
+void updateiRFCM(unsigned int target, unsigned int save) {
+  // 42 is a magic iRFCM: it can't be reassigned.
+  if (irfcm != 42) {
+    irfcm = target;
+    if (save) {
+      ROM_EEPROMProgram(&irfcm, 0, sizeof(irfcm));          
+    }
+    sendAck();
+  }
+}
+
+void sendAck() {
+    if (!quiet) {
+      led_blink_on(TX_LED);
+      Serial.print("{\"ack\":");
+      Serial.print(irfcm);
+      Serial.println("}");
+    }
+}  
