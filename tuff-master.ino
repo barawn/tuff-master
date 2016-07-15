@@ -6,6 +6,9 @@
 #include "inc/hw_types.h"
 #include "inc/hw_nvic.h"
 #include "driverlib/sysctl.h"
+
+#define VERSION "1.0"
+
 // Pins.
 #define RX_LED 0
 #define TX_LED 1
@@ -68,9 +71,12 @@ void led_blink_off_check() {
    }
 }
 
-
-SPIClass tuff0(0);
-SPIClass tuff2(3);
+// NOTE: This is BACKWARDS from the original schematic/layout,
+// however, it matches the LABELING on the board, which
+// swapped 0/2 (literally, "TUFF 0" is over the connector
+// labelled 'TUFF23_RESET', etc.
+SPIClass tuff0(3);
+SPIClass tuff2(0);
 
 void tuffCommand(unsigned int tuff, unsigned int command) {
   if (tuff) {
@@ -146,9 +152,9 @@ void setup()
   Serial.print("{\"log\":\"boot irfcm ");
   if (irfcm != 0xFFFFFFFF) {
     Serial.print(irfcm);
-    Serial.println("\"}");
+    Serial.println(" v" VERSION "\"}");
   } else {
-    Serial.println("unassigned\"}");
+    Serial.println("unassigned v" VERSION "\"}");
   }
 }
 
