@@ -291,7 +291,7 @@ unsigned int tuff_ch_to_address(unsigned int channel) {
   return tuff_address_table[channel];
 }
 
-void build_mask(unsigned int start, unsigned int stop, unsigned int *on_mask, unsigned int *off_mask) {
+void build_mask(unsigned int start, unsigned int stop, unsigned short *on_mask, unsigned short *off_mask) {
   // Figure out which channels we turn on, and which we turn off.
   for (unsigned int i=0;i<24;i++) {
     bool before_stop = false;
@@ -299,6 +299,12 @@ void build_mask(unsigned int start, unsigned int stop, unsigned int *on_mask, un
     bool match = false;
     unsigned int address;
     unsigned int top;
+    if (debug) {
+      Serial2.print("Ch");
+      Serial2.print(i);
+      Serial2.print(" phi ");
+      Serial2.print(phi_array[i]);
+    }
     // Figure out if this channel's phi sector is before the stop
     if (phi_array[i] <= stop) before_stop = true;
     // Figure out if this channel's phi sector is after the start.
@@ -312,16 +318,32 @@ void build_mask(unsigned int start, unsigned int stop, unsigned int *on_mask, un
     } else {
      if (before_stop && after_start) match = true;
     }
+    if (debug) {
+      if (match) Serial2.println(" in range.");
+      else Serial2.println(" not in range.");
+    }
     // Find out this TUFF channels' address.
     address = tuff_ch_to_address(i);
     if (address & 0x4000) top = 1;
     else top = 0;
-    if (i>12) {      
+    if (i>11) {      
+      if (match) on_mask[top+2] |= address;
+      else off_mask[top+2] |= address;
+      if (debug) {
+        Serial2.print("On mask now ");
+        Serial2.println(on_mask[top]);
+        Serial2.print("Off mask now ");
+        Serial2.println(off_mask[top]);
+      }
+    } else {
       if (match) on_mask[top] |= address;
       else off_mask[top] |= address;
-    } else {
-      if (match) on_mask[top+2] |= tuff_ch_to_address(i);
-      else off_mask[top+2] |= tuff_ch_to_address(i);
+      if (debug) {
+        Serial2.print("On mask now ");
+        Serial2.println(on_mask[top+2]);
+        Serial2.print("Off mask now ");
+        Serial2.println(off_mask[top+2]);
+      }
     }
   }
 }
@@ -330,24 +352,44 @@ void parseJsonCommand() {
   StaticJsonBuffer<512> jsonBuffer;
   JsonObject& root = jsonBuffer.parseObject(cmd_buffer);
   if (!root.success()) {
-      if (debug) Serial.println("{\"log\":\"invalid JSON\"}");
+      if (debug) Serial2.println("invalid JSON received");
       return;
   }
   if (root.containsKey("debug")) {
     unsigned char val = root["debug"];
-    if (val) debug = true;
-    else debug = false;
+    if (val) {
+      Serial2.begin(115200);
+      Serial2.print("iRFCM ");
+      Serial2.print(irfcm);
+      Serial2.println(" beginning debug.");
+      debug = true;
+    } else {
+      if (debug) {
+        Serial2.print("iRFCM ");
+        Serial2.print(irfcm);
+        Serial2.println(" ending debug.");
+        Serial2.end();
+      }        
+      debug = false;
+    }
   }
   if (root.containsKey("quiet")) {
     unsigned char val = root["quiet"];
-    if (val) quiet = true;
-    else quiet = false;
+    if (val) {
+      if (debug) Serial2.println("Going quiet.");
+      quiet = true;
+    } else {
+      if (debug) Serial2.println("Going loud.");
+      quiet = false;
+    }
   }
   if (root.containsKey("reset")) {
     unsigned char val = root["reset"];
     if (val == irfcm) {
+        if (debug) Serial2.println("Resetting TUFFs.");
         resetAll();
         if (!quiet) {
+          led_blink_on(TX_LED);
           Serial.print("{\"ack\":");
           Serial.print(irfcm);
           Serial.println("}");
@@ -362,6 +404,7 @@ void parseJsonCommand() {
       irfcm_to_ping = pingArray[i];
       if (irfcm_to_ping == irfcm) {
         led_blink_on(TX_LED);
+        if (debug) Serial2.println("Got ping, returning pong.");
         Serial.print("{\"pong\":");
         Serial.print(irfcm);
         Serial.println("}");
@@ -373,81 +416,24 @@ void parseJsonCommand() {
     JsonArray& phiarr = root["r0"];
     unsigned int start = phiarr[0];
     unsigned int stop = phiarr[1];
-    unsigned int on_mask[4];
-    unsigned int off_mask[4];
-    
-    build_mask(start, stop, on_mask, off_mask);
-    for (unsigned int i=0;i<4;i++) {
-      // OK, so now we have our address masks. Add the notch command (0x80), the notch mask (0x1<<3), and notch on (0x1).
-      on_mask[i] |= 0x80 | (0x1<<3) | 0x1;
-      // Add notch command, and notch mask (no notch on).
-      off_mask[i] |= 0x80 | (0x1<<3);
-    }
-    // Go 0,2,1,3 here to allow the 0/2 stacks to proceed in parallel.
-    // Turn on.
-    tuffCommand(0, on_mask[0]);
-    tuffCommand(1, on_mask[2]);
-    tuffCommand(0, on_mask[1]);
-    tuffCommand(1, on_mask[3]);
-    // Turn off.
-    tuffCommand(0, off_mask[0]);
-    tuffCommand(1, off_mask[2]);
-    tuffCommand(0, off_mask[1]);
-    tuffCommand(1, off_mask[3]);
+
+    notch_range_command(0x1, start, stop);
   }
   if (root.containsKey("r1")) {
     JsonArray& phiarr = root["r1"];
     unsigned int start = phiarr[0];
     unsigned int stop = phiarr[1];
-    unsigned int on_mask[4];
-    unsigned int off_mask[4];
     
-    build_mask(start, stop, on_mask, off_mask);
-    for (unsigned int i=0;i<4;i++) {
-      // OK, so now we have our address masks. Add the notch command (0x80), the notch mask (0x2<<3), and notch on (0x2).
-      on_mask[i] |= 0x80 | (0x2<<3) | 0x2;
-      // Add notch command, and notch mask (no notch on).
-      off_mask[i] |= 0x80 | (0x2<<3);
-    }
-    // Go 0,2,1,3 here to allow the 0/2 stacks to proceed in parallel.
-    // Turn on.
-    tuffCommand(0, on_mask[0]);
-    tuffCommand(1, on_mask[2]);
-    tuffCommand(0, on_mask[1]);
-    tuffCommand(1, on_mask[3]);
-    // Turn off.
-    tuffCommand(0, off_mask[0]);
-    tuffCommand(1, off_mask[2]);
-    tuffCommand(0, off_mask[1]);
-    tuffCommand(1, off_mask[3]);
+    notch_range_command(0x2, start, stop);
   }
   if (root.containsKey("r2")) {
     JsonArray& phiarr = root["r2"];
     unsigned int start = phiarr[0];
     unsigned int stop = phiarr[1];
-    unsigned int on_mask[4];
-    unsigned int off_mask[4];
-        
-    build_mask(start, stop, on_mask, off_mask);
 
-    for (unsigned int i=0;i<4;i++) {
-      // OK, so now we have our address masks. Add the notch command (0x80), the notch mask (0x4<<3), and notch on (0x4).
-      on_mask[i] |= 0x80 | (0x4<<3) | 0x4;
-      // Add notch command, and notch mask (no notch on).
-      off_mask[i] |= 0x80 | (0x4<<3);
-    }
-    // Go 0,2,1,3 here to allow the 0/2 stacks to proceed in parallel.
-    // Turn on.
-    tuffCommand(0, on_mask[0]);
-    tuffCommand(1, on_mask[2]);
-    tuffCommand(0, on_mask[1]);
-    tuffCommand(1, on_mask[3]);
-    // Turn off.
-    tuffCommand(0, off_mask[0]);
-    tuffCommand(1, off_mask[2]);
-    tuffCommand(0, off_mask[1]);
-    tuffCommand(1, off_mask[3]);
+    notch_range_command(0x4, start, stop);
   }
+
   if (root.containsKey("test")) {
     JsonArray &testArray = root["test"];
     if (testArray[0] == irfcm) {
@@ -543,8 +529,8 @@ void parseJsonCommand() {
   // Set commands.
   if (root.containsKey("set")) {
     JsonObject& set = root["set"];
-    if (set.containsKey("irfcm")) {
-      unsigned int target = set["irfcm"];
+    if (set.containsKey("addr")) {
+      unsigned int target = set["addr"];
       if (set.containsKey("save")) {
         unsigned int val;
         val = set["save"];
@@ -562,6 +548,9 @@ void parseJsonCommand() {
           }
         }
       }
+    }
+    if (set.containsKey("irfcm")) {
+      unsigned int target = set["irfcm"];
       if (target == irfcm) {
         if (set.containsKey("phi")) {
           unsigned int saveVal;
@@ -588,3 +577,53 @@ void parseJsonCommand() {
     }
   }
 }
+
+void notch_range_command(unsigned int notch, unsigned int start, unsigned int stop) {
+  unsigned short on_mask[4] = { 0, 0, 0, 0};
+  unsigned short off_mask[4] = { 0, 0, 0, 0};
+  
+  build_mask(start, stop, on_mask, off_mask);
+  for (unsigned int i=0;i<4;i++) {
+    // OK, so now we have our address masks. Add the notch command (0x80), the notch mask (0x1<<3), and notch on (0x1).
+    on_mask[i] |= 0x80 | (notch<<3) | notch;
+    // Add notch command, and notch mask (no notch on).
+    off_mask[i] |= 0x80 | (notch<<3);
+  }
+  if (debug) {
+    Serial2.print("Ranged notch ");
+    Serial2.print(notch);
+    Serial2.print(":");
+    Serial2.print(start);
+    Serial2.print("-");
+    Serial2.println(stop);
+    Serial2.print("On Commands: ");
+    Serial2.print(on_mask[0], HEX);
+    Serial2.print(" ");
+    Serial2.print(on_mask[1], HEX);
+    Serial2.print(" ");
+    Serial2.print(on_mask[2], HEX);
+    Serial2.print(" ");
+    Serial2.println(on_mask[3], HEX);
+    Serial2.print("Off Commands:  ");
+    Serial2.print(off_mask[0], HEX);
+    Serial2.print(" ");
+    Serial2.print(off_mask[1], HEX);
+    Serial2.print(" ");
+    Serial2.print(off_mask[2], HEX);
+    Serial2.print(" ");
+    Serial2.println(off_mask[3], HEX);
+  }
+
+  // Go 0,2,1,3 here to allow the 0/2 stacks to proceed in parallel.
+  // Turn on.
+  tuffCommand(0, on_mask[0]);
+  tuffCommand(1, on_mask[2]);
+  tuffCommand(0, on_mask[1]);
+  tuffCommand(1, on_mask[3]);
+  // Turn off.
+  tuffCommand(0, off_mask[0]);
+  tuffCommand(1, off_mask[2]);
+  tuffCommand(0, off_mask[1]);
+  tuffCommand(1, off_mask[3]);
+}
+
