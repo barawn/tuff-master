@@ -5,13 +5,18 @@
 #include "inc/hw_memmap.h"
 #include "inc/hw_types.h"
 #include "inc/hw_nvic.h"
+#include "inc/hw_flash.h"
 #include "driverlib/sysctl.h"
 
-#define VERSION "1.0"
+#define VERSION "2.0"
+
+#define RESET_ACTIVE 0
+#define RESET_INACTIVE 1
 
 // Pins.
 #define RX_LED 0
 #define TX_LED 1
+#define BOOT_LED 2
 #define LED_ON_TIME 50
 unsigned long led_off_time[3] = { 0, 0, 0 };
 const unsigned long led_pin[3] = { 30, 39, 40 };
@@ -52,7 +57,7 @@ uint32_t __attribute__((section(".noinit"))) irfcm;
 // Integer11: HiTUFF0 ch4 phi   (1<<7 | 1<<4)
 // Integer12: HiTUFF0 ch5 phi   (1<<7 | 1<<5)
 uint32_t __attribute__((section(".noinit"))) phi_array[24];
-
+uint32_t __attribute__((section(".noinit"))) tuff_default_array[5];
 char __attribute__((section(".noinit"))) cmd_buffer[512];
 unsigned char cmd_buffer_ptr = 0;
 
@@ -89,25 +94,34 @@ void tuffCommand(unsigned int tuff, unsigned int command) {
 }
 
 void resetAll() {
-  digitalWrite(tuff_reset[0], 0);
-  digitalWrite(tuff_reset[1], 0);
-  digitalWrite(tuff_reset[0], 1);
-  digitalWrite(tuff_reset[1], 1);
-  digitalWrite(tuff_reset[0], 0);
-  digitalWrite(tuff_reset[1], 0);
+  digitalWrite(tuff_reset[0], RESET_ACTIVE);
+  digitalWrite(tuff_reset[1], RESET_ACTIVE);
+  digitalWrite(tuff_reset[0], RESET_INACTIVE);
+  digitalWrite(tuff_reset[1], RESET_INACTIVE);
   // Sleep to make sure everyone's awake.
   delay(50);
   // OK, we're awake. Now synchronize them (send 0xD00D).
   tuffCommand(0, 0xD00D); 
-  tuffCommand(1, 0xD00D);
+  tuffCommand(1, 0xD00D);  
 }
+
+// Reserved bits.
+#define BOOTCFG_MASK 0x7FFF00EC
+// Value to be written.
+// NW = 0, PORT = B (001), PIN = 5 (101), POL = 0 (LOW), EN = 0,
+// KEY = 1, DBG1=1,DB0=0.
+// so byte 1 is 001 101 0 0 = 0x34
+// 0x7FFF34FE
+#define TUFF_MASTER_BOOTCFG 0x7FFF34FE
 
 void setup()
 {
   unsigned char nb;
+  unsigned int tmp;
   
   pinMode(led_pin[0], OUTPUT);
   pinMode(led_pin[1], OUTPUT);
+  pinMode(led_pin[2], OUTPUT);
 
   pinMode(tuff_clock[0], OUTPUT);
   pinMode(tuff_clock[1], OUTPUT);
@@ -116,9 +130,14 @@ void setup()
 
   Serial.begin(115200);
   Serial4.begin(115200);
+
+  
+  
   ROM_EEPROMInit();
   ROM_EEPROMRead(&irfcm, 0, sizeof(irfcm));
   ROM_EEPROMRead(phi_array, sizeof(irfcm), sizeof(phi_array));
+  ROM_EEPROMRead(tuff_default_array, sizeof(irfcm)+sizeof(phi_array), sizeof(tuff_default_array));
+  
   // Set up SPI outputs.
   tuff0.begin();
   tuff2.begin();
@@ -132,6 +151,8 @@ void setup()
   tuffCommand(0, 0xFFFF);
   tuffCommand(1, 0xFFFF);
   // Set up RESET outputs, and toggle RESET.
+  digitalWrite(tuff_reset[0], RESET_INACTIVE);
+  digitalWrite(tuff_reset[1], RESET_INACTIVE);
   pinMode(tuff_reset[0], OUTPUT);
   pinMode(tuff_reset[1], OUTPUT);
   resetAll();
@@ -148,6 +169,36 @@ void setup()
   }
   // Sleep again to make sure the other TUFFs are ready.
   delay(50);
+  // Defaults.
+  // Are *any other* bits set in the TUFF default array? If so, we were 'blank'.
+  if (tuff_default_array[4] & 0xFFFFFFF0) {
+    tuff_default_array[4] = 0;
+    tuff_default_array[0] = 0x3F89;
+    tuff_default_array[1] = 0x7F89;
+    tuff_default_array[2] = 0x3F89;
+    tuff_default_array[3] = 0x7F89;
+    ROM_EEPROMProgram(tuff_default_array, sizeof(irfcm)+sizeof(phi_array), sizeof(tuff_default_array));
+  }
+  for (unsigned int i=0;i<4;i++) {
+    if (!(tuff_default_array[4] & (1<<i))) {
+      unsigned int tuffNum;
+      if (i == 0 || i == 1) tuffNum = 0;
+      else tuffNum = 1;
+      // This default is valid. Do it.
+      tuffCommand(tuffNum, tuff_default_array[i]);
+    }
+  }  
+  // Check the BOOTCFG register.
+  tmp = HWREG(FLASH_BOOTCFG);
+  if (tmp & FLASH_BOOTCFG_NW) {
+    Serial.println("{\"log\":\"updating BOOTCFG\"}");
+    tmp = (tmp & BOOTCFG_MASK) | (TUFF_MASTER_BOOTCFG & ~BOOTCFG_MASK);
+    HWREG(FLASH_FMD) = tmp;
+    HWREG(FLASH_FMA) = 0x75100000;
+    HWREG(FLASH_FMC) = FLASH_FMC_WRKEY | FLASH_FMC_COMT;
+    while (HWREG(FLASH_FMC) & FLASH_FMC_COMT);
+    Serial.println("{\"log\":\"BOOTCFG updated\"}");
+  }  
   // Output a boot log.
   Serial.print("{\"log\":\"boot irfcm ");
   if (irfcm != 0xFFFFFFFF) {
@@ -156,6 +207,9 @@ void setup()
   } else {
     Serial.println("unassigned v" VERSION "\"}");
   }
+  // I dunno why, but the first analogRead is crap.
+  analogRead(TEMPSENSOR);  
+  led_blink_on(BOOT_LED);
 }
 
 void loop()
@@ -444,9 +498,8 @@ void parseJsonCommand() {
         // do something more.
         pinMode(tuff_clock[1], OUTPUT);
         digitalWrite(tuff_clock[1], 0);
-        digitalWrite(tuff_reset[1], 0);
-        digitalWrite(tuff_reset[1], 1);
-        digitalWrite(tuff_reset[1], 0);
+        digitalWrite(tuff_reset[1], RESET_ACTIVE);
+        digitalWrite(tuff_reset[1], RESET_INACTIVE);
         delay(10);
         digitalWrite(tuff_clock[1], 1);        
         tuff2.begin();
@@ -457,9 +510,8 @@ void parseJsonCommand() {
         // do something more.
         pinMode(tuff_clock[0], OUTPUT);
         digitalWrite(tuff_clock[0], 0);
-        digitalWrite(tuff_reset[0], 0);
-        digitalWrite(tuff_reset[0], 1);
-        digitalWrite(tuff_reset[0], 0);
+        digitalWrite(tuff_reset[0], RESET_ACTIVE);
+        digitalWrite(tuff_reset[0], RESET_INACTIVE);
         delay(10);
         digitalWrite(tuff_clock[0], 1);        
         tuff0.begin();
@@ -508,6 +560,18 @@ void parseJsonCommand() {
       sendAck();
     }
   }
+  if (root.containsKey("monitor")) {
+    unsigned int target = root["monitor"];
+    if (target == irfcm) {
+      uint32_t TempRead;
+      float TempC;
+      TempRead = analogRead(TEMPSENSOR);
+      TempC = (float)(1475 - ((2475*TempRead)/4096))/10;
+      Serial.print("{\"temp\":");
+      Serial.print(TempC);
+      Serial.println("\}");
+    }
+  }
   // Set commands.
   if (root.containsKey("set")) {
     JsonObject& set = root["set"];
@@ -516,6 +580,22 @@ void parseJsonCommand() {
     if (set.containsKey("irfcm")) {
       unsigned int target = set["irfcm"];
       if (target == irfcm) {
+        if (set.containsKey("default")) {
+          JsonArray& defaultArray = set["default"];
+          uint16_t defaultNum = defaultArray[0];
+          int defaultVal = defaultArray[1];
+          if (defaultNum < 4) {
+            if (defaultVal < 0) {
+              // disable it
+              tuff_default_array[4] |= (1<<defaultNum);
+            } else {
+              tuff_default_array[4] &= ~(1<<defaultNum);              
+              tuff_default_array[defaultNum] = defaultVal;
+            }
+            ROM_EEPROMProgram(tuff_default_array, sizeof(irfcm)+sizeof(phi_array), sizeof(tuff_default_array));
+            sendAck();
+          }
+        }
         if (set.containsKey("addr")) {          
           unsigned int target = set["addr"];
           unsigned int val;
@@ -553,6 +633,23 @@ void parseJsonCommand() {
         val = 1;
       }
       updateiRFCM(target, val);
+    }
+  }
+  if (root.containsKey("bootload")) {
+    unsigned int key = root["bootload"];
+    if (key = 12345) {
+      // The bootloader has a 47k pullup, and an 0.1 uF capacitor.
+      // For a normal power-on (generated by a BOR), the chip is held in reset for ~10 ms.
+      // Therefore the bootloader will be high by then.
+      // However, we're going to drive the pin low, and then issue a SysCtlReset().
+      // This reset is much quicker (~microseconds) so the pin will still be low by then.
+      // An 0.1 uF cap at 3.3V holds 0.33 uC of charge, so bleeding it off at 2 mA
+      // will take around 165 us. So let's sleep a bit.
+      pinMode(2, OUTPUT);
+      digitalWrite(2, 0);
+      delay(2);
+      // And now reset.
+      SysCtlReset();
     }
   }
 }
