@@ -10,8 +10,8 @@
 
 #define VERSION "2.0"
 
-#define RESET_ACTIVE 0
-#define RESET_INACTIVE 1
+#define RESET_ACTIVE 1
+#define RESET_INACTIVE 0
 
 // Pins.
 #define RX_LED 0
