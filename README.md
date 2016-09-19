@@ -87,12 +87,12 @@ Syntax: {"bootload":12345}
 
 Places all listening masters into bootloader mode. This means that ONLY ONE iRFCM can be connected to the bootloader. So the instructions are (for a Windows computer currently):
 
-1: Connect a SINGLE iRFCM to a serial port - no chain, or use the iRFCM 0 port.
-2: Compile the firmware in Energia (click 'Verify' button)
-3: Export the compiled binary. (Sketch->Export Compiled Binary).
-4: Load LM Flash Programmer.
-5: Find the serial port and select it. Go to the 'Program' tab, and browse to the .BIN file that was exported in the sketch directory. This is just getting ready.
-6: In the Serial Monitor, type {"bootload":12345} and hit enter. Close the serial monitor.
-7: In LM Flash Programmer, click Program.
+1. Connect a SINGLE iRFCM to a serial port - no chain, or use the iRFCM 0 port.
+2. Compile the firmware in Energia (click 'Verify' button)
+3. Export the compiled binary. (Sketch->Export Compiled Binary).
+4. Load LM Flash Programmer.
+5. Find the serial port and select it. Go to the 'Program' tab, and browse to the .BIN file that was exported in the sketch directory. This is just getting ready.
+6. In the Serial Monitor, type {"bootload":12345} and hit enter. Close the serial monitor.
+7. In LM Flash Programmer, click Program.
 
 There is a program to do this under Linux (sflash) but I'm still working on that.
